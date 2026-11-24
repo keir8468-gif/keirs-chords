@@ -1,0 +1,60 @@
+name: Build macOS (AU + VST3 + Standalone)
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo runners available
+
+  mac:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (universal arm64 + x86_64)
+        run: cmake -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+      - name: Build
+        run: cmake --build build --config Release --target KeirsChords_AU KeirsChords_VST3 KeirsChords_Standalone -- -quiet
+
+      - name: Collect + ad-hoc sign
+        run: |
+          mkdir -p dist
+          cp -R "build/KeirsChords_artefacts/Release/AU/Keir's Chords.component" dist/
+          cp -R "build/KeirsChords_artefacts/Release/VST3/Keir's Chords.vst3" dist/
+          codesign --force --deep -s - "dist/Keir's Chords.component"
+          cp -R "build/KeirsChords_artefacts/Release/Standalone/Keir's Chords.app" dist/
+          codesign --force --deep -s - "dist/Keir's Chords.vst3"
+          codesign --force --deep -s - "dist/Keir's Chords.app"
+          lipo -info "dist/Keir's Chords.vst3/Contents/MacOS/Keir's Chords"
+
+      - name: Validate Audio Unit (auval)
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "dist/Keir's Chords.component" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          sleep 3
+          auval -v aumu Kchd Keir
+
+      - name: Package
+        run: |
+          cp INSTALL.md dist/
+          mv dist "Keirs Chords"
+          ditto -c -k --sequesterRsrc --keepParent "Keirs Chords" KeirsChords-mac.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KeirsChords-mac
+          path: "Keirs Chords"
+
+      - name: Release (on version tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: KeirsChords-mac.zip
